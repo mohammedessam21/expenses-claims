@@ -1,0 +1,11 @@
+en:
+  activerecord:
+    attributes:
+      claim:
+        amount_halalas: Amount
+        limit_halalas_at_submission: Limit at submission
+        spent_on: Date
+      category:
+        name_en: English name
+        name_ar: Arabic name
+        limit_halalas: Limit
