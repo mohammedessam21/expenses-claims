@@ -153,6 +153,7 @@ The brief says a claim keeps the limit that applied when it was submitted, and t
 ### Frontend
 - Translations live in `frontend/src/i18n/en.json` and `ar.json`, loaded by a small React context (no i18n library). TypeScript checks that `ar.json` has every key in `en.json`. All UI strings on all pages are translated, not only the two pages the brief requires. Arabic mode sets `dir="rtl"` and `lang="ar"` on `<html>`, uses `name_ar` for categories, and the CSS uses logical properties so the layout mirrors. The language choice is remembered across refreshes.
 - SAR input is parsed as a string (`^\d+(\.\d{1,2})?$`) and converted to halalas with integer arithmetic only; display converts back with integer division and remainder. No floating-point money calculations.
+- Amount and limit inputs accept Arabic-Indic (`١٢٣`), extended Arabic-Indic (`۱۲۳`) and mixed digits, plus the Arabic decimal separator `٫`. `normalizeDigits` in `frontend/src/lib/money.ts` converts them to `0-9` and `.` before the same pattern and integer conversion run, so `١٢٣٫٥٠` becomes 12350 halalas. Thousands separators and other formats are still rejected. (Bonus)
 - API errors show the server's `error` message. Login always shows the generic translated "Invalid email or password". If the server can't be reached at all, a translated "could not reach the server" message is shown.
 - No UI library; plain CSS.
 
@@ -165,10 +166,10 @@ The brief says a claim keeps the limit that applied when it was submitted, and t
 
 - Frontend automated tests (Vitest + React Testing Library) for the claim detail and login screens.
 - Optimistic locking so two approvers can't start a review on the same claim at the same moment.
-- Receipt uploads with Active Storage, Arabic-Indic digit input, and Docker Compose.
+- Receipt uploads with Active Storage, and Docker Compose.
 - Make login take the same time for unknown emails as for wrong passwords. The message is already identical; response timing still differs.
 
-Of the bonus items, pagination on the review queue is done (see Decisions). The others were left out on purpose for this submission. No required features are known to be missing.
+Of the bonus items, pagination on the review queue and Arabic-Indic digit input are done (see Decisions). The others were left out on purpose for this submission. No required features are known to be missing.
 
 ## Time spent
 
