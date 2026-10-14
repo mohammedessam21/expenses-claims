@@ -159,7 +159,7 @@ The brief says a claim keeps the limit that applied when it was submitted, and t
 
 ## Verification performed
 
-- Backend: the RSpec suite covers models, authentication, every workflow transition and invalid ones, self-review, transaction rollback, employee endpoints (including resubmit without edits), approver endpoints, category management, cross-company 404s for claims and categories, employee 403 on `/review`, JSON error responses, and seeds (including re-running them without overwriting existing data). Run it with `bundle exec rspec`. _Latest pass/fail counts: 106 examples, 0 failures._
+- Backend: the RSpec suite covers models, authentication, every workflow transition and invalid ones, self-review, transaction rollback, employee endpoints (including resubmit without edits), approver endpoints, category management, cross-company 404s for claims and categories, employee 403 on `/review`, JSON error responses, and seeds (including re-running them without overwriting existing data). Run it with `bundle exec rspec`. _Latest pass/fail counts: 114 examples, 0 failures._
 - Frontend: `npx tsc -b` (no errors), `npm run lint` (no warnings), `npm run build` (succeeded). There are no automated frontend tests.
 
 ## What I'd do next with more time
