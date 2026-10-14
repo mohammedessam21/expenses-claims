@@ -164,4 +164,4 @@ Those bonus items were left out on purpose for this submission. No required feat
 
 ## Time spent
 
-About 6 hours.
+About 16 hours.
