@@ -1,0 +1,168 @@
+# Expense Claims Tracker
+
+A multi-company expense claims platform. Employees submit claims; approvers in the same company review them, and manage their company's expense categories and per-claim limits.
+
+- `backend/`: Ruby on Rails 8.1 (API mode) + PostgreSQL, tested with RSpec
+- `frontend/`: React 19 + TypeScript, built with Vite 6
+
+## Runtime versions used
+
+| Tool | Version |
+|---|---|
+| Ruby | 4.0.7 |
+| Rails | 8.1.4 |
+| PostgreSQL | 17.5 |
+| Node.js | 20.16.0 |
+| npm | 10.8.1 |
+| React | 19.3 |
+| Vite | 6.4 |
+| TypeScript | 5.8 |
+
+## Environment variables
+
+The backend reads its database connection from the environment. No credentials are stored in the repository.
+
+| Variable | Required | Default | Purpose |
+|---|---|---|---|
+| `DATABASE_USERNAME` | yes | none | PostgreSQL user |
+| `DATABASE_PASSWORD` | yes | none | PostgreSQL password |
+| `DATABASE_HOST` | no | `localhost` | PostgreSQL host |
+| `DATABASE_PORT` | no | `5432` | PostgreSQL port |
+| `API_PROXY_TARGET` | no | `http://localhost:3000` | Where the Vite dev server forwards `/api` requests |
+
+Databases: `expense_claims_development` and `expense_claims_test`.
+
+## Setup and running
+
+### Backend
+
+```bash
+cd backend
+bundle install
+bin/rails db:prepare
+bin/rails db:seed
+bin/rails server
+```
+
+The API listens on `http://localhost:3000`. `bin/rails db:seed` is idempotent: it only creates missing seed records and never changes existing ones (passwords, category limits and active flags are left as they are).
+
+### Frontend
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+Open `http://localhost:5173`. Vite proxies `/api` to the Rails server, so no CORS setup is needed. If Rails runs on another port, start Vite with `API_PROXY_TARGET`, for example `API_PROXY_TARGET=http://localhost:3100 npm run dev`.
+
+### Checks
+
+```bash
+cd backend && bundle exec rspec
+cd frontend && npx tsc -b
+cd frontend && npm run lint
+cd frontend && npm run build
+```
+
+## Seeded login credentials
+
+All seeded users share the password `Password123!`.
+
+| Company | Role | Email |
+|---|---|---|
+| Acme Trading | Employee | `employee@acme.test` |
+| Acme Trading | Approver | `approver@acme.test` |
+| Globex Services | Employee | `employee@globex.test` |
+| Globex Services | Approver | `approver@globex.test` |
+
+Seeded categories (limits per claim):
+
+| Company | Categories |
+|---|---|
+| Acme Trading | Transport / مواصلات (500.00 SAR), Government Fees / رسوم حكومية (2000.00 SAR), Office Supplies / مستلزمات مكتبية (300.00 SAR) |
+| Globex Services | Transport / مواصلات (400.00 SAR), Meals / وجبات (250.00 SAR), Training / تدريب (1500.00 SAR) |
+
+## API overview
+
+All endpoints are under `/api/v1` and return JSON. Every endpoint except login needs `Authorization: Bearer <token>`.
+
+| Method | Path | Who |
+|---|---|---|
+| POST | `/auth/login` | anyone |
+| GET | `/me` | any signed-in user |
+| GET | `/categories` | any signed-in user (active categories of their company) |
+| GET, POST | `/claims` | any signed-in user (only their own claims) |
+| GET | `/claims/:id` | the claim's employee |
+| POST | `/claims/:id/resubmit`, `/claims/:id/withdraw` | the claim's employee |
+| GET | `/review/claims?status=...` | approver |
+| GET | `/review/claims/:id` | approver |
+| POST | `/review/claims/:id/start_review`, `/approve`, `/reject`, `/return` | approver |
+| GET, POST | `/review/categories` | approver |
+| GET, PATCH | `/review/categories/:id` | approver |
+
+Request bodies: claims use `{ "claim": { ... } }` (optional for resubmit; without it the claim is resubmitted unchanged), categories use `{ "category": { ... } }`, reject uses `{ "reason": "..." }` and return uses `{ "comment": "..." }`.
+
+Status codes:
+
+| Code | When |
+|---|---|
+| 401 | Missing, invalid or expired token; wrong login (`"Invalid email or password"` for both a wrong email and a wrong password) |
+| 403 | An employee calls a `/review` endpoint; an approver tries to review their own claim; someone other than the reviewer tries to approve, reject or return |
+| 404 | A claim or category outside the caller's permitted scope (another company, or a coworker's claim on employee endpoints) |
+| 422 | Invalid transition (`"Cannot approve a claim that is submitted"`), a missing reason or comment, or a validation failure (`"Amount exceeds the category limit of 500.00 SAR"`) |
+| 400 | Missing request body root key, or malformed JSON |
+
+All errors have the shape `{ "error": "..." }`. Unexpected exceptions are logged and return `{ "error": "Internal server error" }`, never a stack trace.
+
+## Decisions
+
+### Data model
+- I kept the five suggested models and fields. Status values are plain strings validated against a list, not a Rails `enum`, so that no `approved!`-style methods exist that could change a status outside the workflow.
+- `ClaimEvent` has `created_at` only. Events are an append-only history and are never updated.
+- `reference_code` is generated by the server before insert from the claim's own id sequence (`CLM-000123`). That keeps the column `NOT NULL` and unique without a second write.
+- Money is stored as integer halalas everywhere. The API rejects fractional or non-numeric amounts (`"Amount must be an integer"`) instead of silently truncating them. Category limits are capped at the PostgreSQL integer maximum, so an oversized limit returns 422 instead of a database error.
+
+### Limit snapshot on resubmit
+The brief says a claim keeps the limit that applied when it was submitted, and that the limit is re-checked on resubmit. My interpretation: `limit_halalas_at_submission` is copied from the category once, when the claim is first created, and is never refreshed. On resubmit, the edited amount is validated against that original snapshot, not the category's current limit. So if an approver lowers a category limit after submission, the employee's existing claim is unaffected, including when it is corrected and resubmitted.
+
+### Workflow
+- All transitions live in one plain Ruby service, `ClaimWorkflow` (`backend/app/services/claim_workflow.rb`). A transition table defines the allowed from-states. Each transition updates the claim and creates its `ClaimEvent` inside one database transaction; a spec stubs the event write to fail and confirms the status change is rolled back.
+- Claim creation goes through `ClaimWorkflow.submit`, which also writes a `submit` event, so the timeline starts with the submission.
+- The workflow checks the state first, then the permission. Approving a `submitted` claim therefore reports the invalid transition (422), as in the brief's example.
+- On resubmit the reviewer is cleared, because the claim goes back to `submitted` and any approver may start a new review.
+- Claim responses include `available_actions`, computed by the same workflow for the current user. The frontend shows buttons from that list, so the UI and the backend never disagree about what is allowed. The backend still enforces every rule itself.
+- Approvers can submit claims through the employee endpoints (the self-review rule implies this). The frontend's approver area does not include a claim submission screen, because the brief doesn't ask for one.
+- There is no general claim update endpoint, and strong parameters only accept `category_id`, `amount_halalas`, `description` and `spent_on` (create) or `amount_halalas` and `description` (resubmit). `status`, `company_id`, `employee_id`, `reviewer_id`, `reference_code` and `limit_halalas_at_submission` are always set by the server.
+- Creating a claim with a category that is inactive or belongs to another company returns 404 `"Category not found"`, consistent with the "don't confirm it exists" rule.
+
+### Authentication
+- `has_secure_password` with bcrypt.
+- Tokens use Rails' built-in `generates_token_for :auth` (a signed, expiring token, valid for 12 hours). Changing a user's password invalidates their existing tokens. No JWT library is needed.
+- The frontend stores the token in `localStorage`, attaches it with an axios request interceptor, and on any 401 clears it and returns to the login page. After a page refresh, the user is restored through `GET /me`.
+
+### Frontend
+- Translations live in `frontend/src/i18n/en.json` and `ar.json`, loaded by a small React context (no i18n library). TypeScript checks that `ar.json` has every key in `en.json`. All UI strings on all pages are translated, not only the two pages the brief requires. Arabic mode sets `dir="rtl"` and `lang="ar"` on `<html>`, uses `name_ar` for categories, and the CSS uses logical properties so the layout mirrors. The language choice is remembered across refreshes.
+- SAR input is parsed as a string (`^\d+(\.\d{1,2})?$`) and converted to halalas with integer arithmetic only; display converts back with integer division and remainder. No floating-point money calculations.
+- API errors show the server's `error` message. Login always shows the generic translated "Invalid email or password". If the server can't be reached at all, a translated "could not reach the server" message is shown.
+- No UI library; plain CSS.
+
+## Verification performed
+
+- Backend: the RSpec suite covers models, authentication, every workflow transition and invalid ones, self-review, transaction rollback, employee endpoints (including resubmit without edits), approver endpoints, category management, cross-company 404s for claims and categories, employee 403 on `/review`, JSON error responses, and seeds (including re-running them without overwriting existing data). Run it with `bundle exec rspec`. _Latest pass/fail counts: 106 examples, 0 failures._
+- Frontend: `npx tsc -b` (no errors), `npm run lint` (no warnings), `npm run build` (succeeded). There are no automated frontend tests.
+
+## What I'd do next with more time
+
+- Frontend automated tests (Vitest + React Testing Library) for the claim detail and login screens.
+- Optimistic locking so two approvers can't start a review on the same claim at the same moment.
+- Pagination on the review queue.
+- Receipt uploads with Active Storage, Arabic-Indic digit input, and Docker Compose.
+- Make login take the same time for unknown emails as for wrong passwords. The message is already identical; response timing still differs.
+
+Those bonus items were left out on purpose for this submission. No required features are known to be missing.
+
+## Time spent
+
+About 16 hours.
+Work was done locally and committed in logical steps at the end.
