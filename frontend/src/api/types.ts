@@ -59,6 +59,18 @@ export interface Claim {
   reviewer: Person | null
 }
 
+export interface PageMeta {
+  page: number
+  per_page: number
+  total_count: number
+  total_pages: number
+}
+
+export interface ClaimPage {
+  claims: Claim[]
+  meta: PageMeta
+}
+
 export interface ClaimDetail extends Claim {
   available_actions: ClaimAction[]
   events: ClaimEvent[]

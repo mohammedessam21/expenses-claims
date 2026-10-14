@@ -5,6 +5,7 @@ import type {
   Claim,
   ClaimDetail,
   ClaimEdits,
+  ClaimPage,
   ClaimStatus,
   NewClaim,
   User,
@@ -50,9 +51,9 @@ export async function withdrawClaim(id: number) {
   return data.claim
 }
 
-export async function fetchReviewClaims(status: ClaimStatus | '') {
-  const { data } = await api.get<{ claims: Claim[] }>('/review/claims', { params: status ? { status } : {} })
-  return data.claims
+export async function fetchReviewClaims(status: ClaimStatus | '', page: number) {
+  const { data } = await api.get<ClaimPage>('/review/claims', { params: status ? { status, page } : { page } })
+  return data
 }
 
 export async function fetchReviewClaim(id: string) {

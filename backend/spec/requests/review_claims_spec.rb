@@ -66,6 +66,88 @@ RSpec.describe "Review claims API" do
     end
   end
 
+  describe "GET /api/v1/review/claims pagination" do
+    it "returns the first 20 claims with page metadata by default" do
+      Array.new(21) { submit_as(employee) }
+
+      get "/api/v1/review/claims", headers: auth_headers(approver)
+
+      expect(response).to have_http_status(:ok)
+      expect(json["claims"].size).to eq(20)
+      expect(json["meta"]).to eq("page" => 1, "per_page" => 20, "total_count" => 21, "total_pages" => 2)
+    end
+
+    it "returns the next claims on the second page without overlap, even with identical timestamps" do
+      claims = freeze_time { Array.new(3) { submit_as(employee) } }
+
+      get "/api/v1/review/claims", params: { per_page: 2 }, headers: auth_headers(approver)
+      first_page = json["claims"].map { |c| c["id"] }
+      get "/api/v1/review/claims", params: { per_page: 2, page: 2 }, headers: auth_headers(approver)
+      second_page = json["claims"].map { |c| c["id"] }
+
+      expect(first_page).to eq([claims[2].id, claims[1].id])
+      expect(second_page).to eq([claims[0].id])
+      expect(json["meta"]).to eq("page" => 2, "per_page" => 2, "total_count" => 3, "total_pages" => 2)
+    end
+
+    it "caps per_page at 100" do
+      submit_as(employee)
+
+      get "/api/v1/review/claims", params: { per_page: 500 }, headers: auth_headers(approver)
+
+      expect(response).to have_http_status(:ok)
+      expect(json["meta"]).to include("per_page" => 100, "total_pages" => 1)
+    end
+
+    it "paginates within the status filter" do
+      submitted = Array.new(3) { submit_as(employee) }
+      under_review_claim
+
+      get "/api/v1/review/claims", params: { status: "submitted", per_page: 2, page: 2 }, headers: auth_headers(approver)
+
+      expect(json["claims"].map { |c| c["id"] }).to eq([submitted.first.id])
+      expect(json["meta"]).to include("total_count" => 3, "total_pages" => 2)
+    end
+
+    it "never includes or counts another company's claims" do
+      own = submit_as(employee)
+      2.times { submit_as(other_employee, cat: other_category) }
+
+      get "/api/v1/review/claims", headers: auth_headers(approver)
+
+      expect(json["claims"].map { |c| c["id"] }).to eq([own.id])
+      expect(json["meta"]).to include("total_count" => 1, "total_pages" => 1)
+    end
+
+    it "returns an empty list with correct metadata for a page beyond the last" do
+      submit_as(employee)
+
+      get "/api/v1/review/claims", params: { page: 5 }, headers: auth_headers(approver)
+
+      expect(response).to have_http_status(:ok)
+      expect(json["claims"]).to eq([])
+      expect(json["meta"]).to eq("page" => 5, "per_page" => 20, "total_count" => 1, "total_pages" => 1)
+    end
+
+    it "returns 422 for an invalid page" do
+      %w[0 -1 abc 1.5].each do |page|
+        get "/api/v1/review/claims", params: { page: page }, headers: auth_headers(approver)
+
+        expect(response).to have_http_status(:unprocessable_content)
+        expect(json).to eq("error" => "page must be a positive integer")
+      end
+    end
+
+    it "returns 422 for an invalid per_page" do
+      %w[0 -5 ten].each do |per_page|
+        get "/api/v1/review/claims", params: { per_page: per_page }, headers: auth_headers(approver)
+
+        expect(response).to have_http_status(:unprocessable_content)
+        expect(json).to eq("error" => "per_page must be a positive integer")
+      end
+    end
+  end
+
   describe "GET /api/v1/review/claims/:id" do
     it "returns a company claim with its timeline and the approver's actions" do
       claim = submit_as(employee)

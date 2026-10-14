@@ -95,13 +95,15 @@ All endpoints are under `/api/v1` and return JSON. Every endpoint except login n
 | GET, POST | `/claims` | any signed-in user (only their own claims) |
 | GET | `/claims/:id` | the claim's employee |
 | POST | `/claims/:id/resubmit`, `/claims/:id/withdraw` | the claim's employee |
-| GET | `/review/claims?status=...` | approver |
+| GET | `/review/claims?status=...&page=1&per_page=20` | approver (paginated) |
 | GET | `/review/claims/:id` | approver |
 | POST | `/review/claims/:id/start_review`, `/approve`, `/reject`, `/return` | approver |
 | GET, POST | `/review/categories` | approver |
 | GET, PATCH | `/review/categories/:id` | approver |
 
 Request bodies: claims use `{ "claim": { ... } }` (optional for resubmit; without it the claim is resubmitted unchanged), categories use `{ "category": { ... } }`, reject uses `{ "reason": "..." }` and return uses `{ "comment": "..." }`.
+
+`GET /review/claims` is paginated. `page` defaults to 1 and `per_page` to 20 (capped at 100). The response is `{ "claims": [...], "meta": { "page": 1, "per_page": 20, "total_count": 42, "total_pages": 3 } }`. A page beyond the last one returns an empty `claims` list with the same `meta`.
 
 Status codes:
 
@@ -110,7 +112,7 @@ Status codes:
 | 401 | Missing, invalid or expired token; wrong login (`"Invalid email or password"` for both a wrong email and a wrong password) |
 | 403 | An employee calls a `/review` endpoint; an approver tries to review their own claim; someone other than the reviewer tries to approve, reject or return |
 | 404 | A claim or category outside the caller's permitted scope (another company, or a coworker's claim on employee endpoints) |
-| 422 | Invalid transition (`"Cannot approve a claim that is submitted"`), a missing reason or comment, or a validation failure (`"Amount exceeds the category limit of 500.00 SAR"`) |
+| 422 | Invalid transition (`"Cannot approve a claim that is submitted"`), a missing reason or comment, a validation failure (`"Amount exceeds the category limit of 500.00 SAR"`), or an invalid `page`/`per_page` (`"page must be a positive integer"`) |
 | 400 | Missing request body root key, or malformed JSON |
 
 All errors have the shape `{ "error": "..." }`. Unexpected exceptions are logged and return `{ "error": "Internal server error" }`, never a stack trace.
@@ -136,6 +138,13 @@ The brief says a claim keeps the limit that applied when it was submitted, and t
 - There is no general claim update endpoint, and strong parameters only accept `category_id`, `amount_halalas`, `description` and `spent_on` (create) or `amount_halalas` and `description` (resubmit). `status`, `company_id`, `employee_id`, `reviewer_id`, `reference_code` and `limit_halalas_at_submission` are always set by the server.
 - Creating a claim with a category that is inactive or belongs to another company returns 404 `"Category not found"`, consistent with the "don't confirm it exists" rule.
 
+### Pagination (bonus)
+- The review queue uses plain `limit`/`offset`, written by hand, so no pagination gem is needed and every line is easy to follow.
+- Claims are ordered by `created_at DESC, id DESC`. The `id` tie-break keeps the order stable when two claims share a timestamp, so pages never overlap or skip a claim.
+- `total_count` is counted on the same company-scoped, status-filtered query, so another company's claims are never included or counted. `total_pages` is calculated with integer arithmetic.
+- An invalid `page` or `per_page` (not a whole number, or less than 1) returns 422 with a clear message instead of being silently replaced by a default. A `per_page` above 100 is capped at 100. A page beyond the last returns an empty list and skips the database query, so a huge page number can't produce an oversized `OFFSET`.
+- In the frontend, the current page lives in the URL (`?status=submitted&page=2`) like the status filter, so refresh and Back keep it. Changing the filter goes back to page 1.
+
 ### Authentication
 - `has_secure_password` with bcrypt.
 - Tokens use Rails' built-in `generates_token_for :auth` (a signed, expiring token, valid for 12 hours). Changing a user's password invalidates their existing tokens. No JWT library is needed.
@@ -156,11 +165,10 @@ The brief says a claim keeps the limit that applied when it was submitted, and t
 
 - Frontend automated tests (Vitest + React Testing Library) for the claim detail and login screens.
 - Optimistic locking so two approvers can't start a review on the same claim at the same moment.
-- Pagination on the review queue.
 - Receipt uploads with Active Storage, Arabic-Indic digit input, and Docker Compose.
 - Make login take the same time for unknown emails as for wrong passwords. The message is already identical; response timing still differs.
 
-Those bonus items were left out on purpose for this submission. No required features are known to be missing.
+Of the bonus items, pagination on the review queue is done (see Decisions). The others were left out on purpose for this submission. No required features are known to be missing.
 
 ## Time spent
 

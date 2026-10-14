@@ -198,6 +198,14 @@ textarea {
   margin-block: 1rem;
 }
 
+.pagination {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.75rem;
+  margin-block: 1rem;
+}
+
 .table {
   width: 100%;
   border-collapse: collapse;
